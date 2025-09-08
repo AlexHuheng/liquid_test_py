@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-液路清洗流程配置与C代码生成工具 - 完整修复版
-包含电机同步异步、电机等待、循环功能
+液路清洗流程配置与C代码生成工具 - 完整修复版 + Lua脚本支持
+包含电机同步异步、电机等待、循环功能，新增Lua脚本输出
 修复了循环中电机控制参数缺失和下拉框选项不一致的问题
 """
 
@@ -25,11 +25,14 @@ except ImportError:
 class LiquidProcessGenerator:
     def __init__(self, root):
         self.root = root
-        self.root.title("液路流程配置与C代码生成工具 - 完整修复版")
-        self.root.geometry("1400x900")
+        self.root.title("液路流程配置与C/Lua代码生成工具 - 增强版")
+        self.root.geometry("1500x950")
         
         # 流程数据
         self.steps_data = []
+        
+        # 输出类型
+        self.output_type = tk.StringVar(value="C")
         
         # 设备配置映射
         self.device_mapping = {
@@ -50,7 +53,26 @@ class LiquidProcessGenerator:
             "试剂针Y轴": "MOTOR_NEEDLE_R2_Y", "试剂针Z轴": "MOTOR_NEEDLE_R2_Z",
         }
         
-        # 电机选项列表 - 统一定义（关键修复）
+        # Lua设备映射 (简化的Lua接口)
+        self.lua_device_mapping = {
+            # 阀门 - 使用Lua风格的命名
+            "SV1": "valve.sv1", "SV2": "valve.sv2", "SV3": "valve.sv3",
+            "SV4": "valve.sv4", "SV5": "valve.sv5", "SV6": "valve.sv6",
+            "SV7": "valve.sv7", "SV8": "valve.sv8", "SV9": "valve.sv9",
+            "SV10": "valve.sv10", "SV11": "valve.sv11", "SV12": "valve.sv12",
+            # 泵
+            "隔膜泵Q1": "pump.q1", "隔膜泵Q2": "pump.q2",
+            "隔膜泵Q3": "pump.q3", "隔膜泵Q4": "pump.q4",
+            "隔膜泵F1": "pump.f1", "隔膜泵F2": "pump.f2",
+            "隔膜泵F3": "pump.f3", "隔膜泵F4": "pump.f4",
+            # 电机
+            "样本针柱塞泵": "motor.needle_s_pump", "试剂针柱塞泵": "motor.needle_r2_pump",
+            "特殊清洗液泵": "motor.clearer_pump", "样本针X轴": "motor.needle_s_x",
+            "样本针Y轴": "motor.needle_s_y", "样本针Z轴": "motor.needle_s_z",
+            "试剂针Y轴": "motor.needle_r2_y", "试剂针Z轴": "motor.needle_r2_z",
+        }
+        
+        # 电机选项列表 - 统一定义
         self.motor_options = [
             "样本针柱塞泵", "试剂针柱塞泵", "特殊清洗液泵",
             "样本针X轴", "样本针Y轴", "样本针Z轴", 
@@ -58,7 +80,7 @@ class LiquidProcessGenerator:
         ]
         
         self.setup_ui()
-        print("液路流程配置工具初始化完成")
+        print("液路流程配置工具初始化完成 - 已增加Lua脚本支持")
         
     def setup_ui(self):
         # 主框架
@@ -84,11 +106,20 @@ class LiquidProcessGenerator:
         self.process_desc_text = tk.Text(control_frame, height=3)
         self.process_desc_text.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5)
         
+        # 输出类型选择 - 新增功能
+        output_frame = ttk.LabelFrame(control_frame, text="输出类型", padding="5")
+        output_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Radiobutton(output_frame, text="C语言", variable=self.output_type, 
+                       value="C", command=self.on_output_type_changed).pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(output_frame, text="Lua脚本", variable=self.output_type, 
+                       value="Lua", command=self.on_output_type_changed).pack(side=tk.LEFT, padx=10)
+        
         # 步骤配置
         steps_frame = ttk.LabelFrame(control_frame, text="步骤配置", padding="10")
-        steps_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
+        steps_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         steps_frame.columnconfigure(1, weight=1)
-        control_frame.rowconfigure(2, weight=1)
+        control_frame.rowconfigure(3, weight=1)
         
         # 步骤类型选择
         ttk.Label(steps_frame, text="步骤类型:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -135,13 +166,13 @@ class LiquidProcessGenerator:
         
         # 主要操作按钮
         main_button_frame = ttk.Frame(control_frame)
-        main_button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        main_button_frame.grid(row=4, column=0, columnspan=2, pady=10)
         
         if PANDAS_AVAILABLE:
             ttk.Button(main_button_frame, text="导入Excel", command=self.import_excel).pack(side=tk.LEFT, padx=5)
         ttk.Button(main_button_frame, text="保存流程", command=self.save_process).pack(side=tk.LEFT, padx=5)
         ttk.Button(main_button_frame, text="加载流程", command=self.load_process).pack(side=tk.LEFT, padx=5)
-        ttk.Button(main_button_frame, text="生成C代码", command=self.generate_c_code).pack(side=tk.LEFT, padx=5)
+        ttk.Button(main_button_frame, text="生成代码", command=self.generate_code).pack(side=tk.LEFT, padx=5)
         
         # 右侧代码预览
         preview_frame = ttk.LabelFrame(main_frame, text="代码预览", padding="10")
@@ -151,10 +182,24 @@ class LiquidProcessGenerator:
         
         self.code_preview = scrolledtext.ScrolledText(preview_frame, wrap=tk.NONE)
         self.code_preview.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        ttk.Button(preview_frame, text="保存C代码", command=self.save_c_code).grid(row=1, column=0, pady=5)
+        
+        # 预览操作按钮
+        preview_button_frame = ttk.Frame(preview_frame)
+        preview_button_frame.grid(row=1, column=0, pady=5)
+        ttk.Button(preview_button_frame, text="保存C代码", command=self.save_c_code).pack(side=tk.LEFT, padx=5)
+        ttk.Button(preview_button_frame, text="保存Lua脚本", command=self.save_lua_code).pack(side=tk.LEFT, padx=5)
         
         # 初始代码
-        self.code_preview.insert(tk.END, """/* 液路清洗流程C代码生成工具 - 完整修复版 */
+        self.show_initial_code()
+        
+    def on_output_type_changed(self):
+        """输出类型改变时更新预览"""
+        self.update_code_preview()
+        
+    def show_initial_code(self):
+        """显示初始代码"""
+        if self.output_type.get() == "C":
+            initial_code = """/* 液路清洗流程C代码生成工具 - 完整修复版 + Lua支持 */
 /* 支持功能: 电机同步/异步、电机等待、循环控制 */
 
 void example_process(void)
@@ -167,7 +212,27 @@ void example_process(void)
     // 您配置的步骤将在这里生成
     
     LOG("liquid_circuit: process end\\n");
-}""")
+}"""
+        else:
+            initial_code = """-- 液路清洗流程Lua脚本生成工具
+-- 支持功能: 阀门控制、泵控制、电机控制、延时、循环
+-- 生成时间: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """
+
+function example_process()
+    local i = 0
+    
+    log.info("liquid_circuit: process start")
+    
+    -- 您配置的步骤将在这里生成
+    
+    log.info("liquid_circuit: process end")
+end
+
+-- 调用示例
+-- example_process()"""
+        
+        self.code_preview.delete(1.0, tk.END)
+        self.code_preview.insert(tk.END, initial_code)
         
     def on_step_type_changed(self, event=None):
         step_type = self.step_type_var.get()
@@ -352,7 +417,7 @@ void example_process(void)
         
         # 说明
         info_label = ttk.Label(self.param_frame, 
-                              text="循环功能将重复执行指定的步骤序列，生成for循环结构的C代码", 
+                              text="循环功能将重复执行指定的步骤序列，生成for循环结构的代码", 
                               foreground="gray", font=("Arial", 9))
         info_label.grid(row=2, column=0, columnspan=2, pady=10)
         
@@ -689,10 +754,16 @@ void example_process(void)
         
     def update_code_preview(self):
         if not self.steps_data:
+            self.show_initial_code()
             return
-        c_code = self.generate_c_function()
+            
+        if self.output_type.get() == "C":
+            code = self.generate_c_function()
+        else:
+            code = self.generate_lua_function()
+            
         self.code_preview.delete(1.0, tk.END)
-        self.code_preview.insert(tk.END, c_code)
+        self.code_preview.insert(tk.END, code)
         
     def generate_c_function(self):
         process_name = self.process_name_var.get() or "custom_process"
@@ -713,7 +784,7 @@ void {func_name}(void)
     
 """
         for i, step in enumerate(self.steps_data):
-            c_code += self.generate_step_code(step, i)
+            c_code += self.generate_c_step_code(step, i)
             
         c_code += f"""
     LOG("liquid_circuit: {process_name} end\\n");
@@ -721,7 +792,39 @@ void {func_name}(void)
 """
         return c_code
         
-    def generate_step_code(self, step, step_index):
+    def generate_lua_function(self):
+        """生成Lua脚本函数"""
+        process_name = self.process_name_var.get() or "custom_process"
+        process_desc = self.process_desc_text.get("1.0", tk.END).strip()
+        
+        func_name = process_name.lower().replace(" ", "_").replace("-", "_")
+        func_name = "".join(c for c in func_name if c.isalnum() or c == "_")
+        if not func_name or func_name[0].isdigit():
+            func_name = "process_" + func_name
+            
+        lua_code = f"""-- {process_desc or process_name}
+-- 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+function {func_name}()
+    local i = 0
+    
+    log.info(string.format("liquid_circuit: %s start", "{process_name}"))
+    
+"""
+        for i, step in enumerate(self.steps_data):
+            lua_code += self.generate_lua_step_code(step, i)
+            
+        lua_code += f"""
+    log.info(string.format("liquid_circuit: %s end", "{process_name}"))
+end
+
+-- 调用示例
+-- {func_name}()
+"""
+        return lua_code
+        
+    def generate_c_step_code(self, step, step_index):
+        """生成C语言步骤代码"""
         step_type = step["type"]
         code = f"    // 步骤 {step_index + 1}: {self.get_step_description(step)}\n"
         
@@ -748,7 +851,6 @@ void {func_name}(void)
             cmd = cmd_mapping.get(step["command"], "CMD_MOTOR_RST")
             mode = step.get("mode", "异步")
             
-            # 关键修复: 确保所有参数都存在，使用默认值防止KeyError
             param1 = step.get("param1", "0")
             param2 = step.get("param2", "20000")
             param3 = step.get("param3", "50000")
@@ -795,7 +897,7 @@ void {func_name}(void)
             code += f"        // 循环第 i+1 次，共执行 {len(loop_steps)} 个步骤\n"
             
             for j, loop_step in enumerate(loop_steps):
-                loop_code = self.generate_step_code(loop_step, j)
+                loop_code = self.generate_c_step_code(loop_step, j)
                 # 给循环内的代码增加缩进
                 loop_code_lines = loop_code.split('\n')
                 for line in loop_code_lines:
@@ -842,6 +944,113 @@ void {func_name}(void)
         code += "\n"
         return code
         
+    def generate_lua_step_code(self, step, step_index):
+        """生成Lua脚本步骤代码"""
+        step_type = step["type"]
+        code = f"    -- 步骤 {step_index + 1}: {self.get_step_description(step)}\n"
+        
+        if step_type == "阀门控制":
+            device = self.lua_device_mapping.get(step["device"], step["device"].lower())
+            action = "true" if step["action"] == "开" else "false"
+            code += f"    {device}:set({action})\n"
+            
+        elif step_type == "泵控制":
+            device = self.lua_device_mapping.get(step["device"], step["device"].lower())
+            action = "true" if step["action"] == "开" else "false"
+            code += f"    {device}:set({action})\n"
+            
+        elif step_type == "延时":
+            time_val = int(step["time"])
+            if step["unit"] == "s":
+                time_val *= 1000
+            code += f"    time.sleep({time_val})  -- 延时{time_val}ms\n"
+            
+        elif step_type == "电机控制":
+            motor = self.lua_device_mapping.get(step["motor"], step["motor"].lower())
+            cmd_mapping = {"复位": "reset", "步进移动": "move_step", 
+                          "速度移动": "move_speed", "停止": "stop"}
+            cmd = cmd_mapping.get(step["command"], "reset")
+            mode = step.get("mode", "异步")
+            
+            param1 = step.get("param1", "0")
+            param2 = step.get("param2", "20000")
+            param3 = step.get("param3", "50000")
+            
+            if mode == "同步":
+                timeout = step.get("timeout", "20000")
+                code += f"    local result = {motor}:{cmd}_sync({param1}, {param2}, {param3}, {timeout})\n"
+                code += f"    if not result then\n"
+                code += f"        log.error(\"liquid_circuit: motor sync operation failed\")\n"
+                code += f"        error(\"Motor operation failed\")\n"
+                code += f"    end\n"
+            else:
+                code += f"    local result = {motor}:{cmd}_async({param1}, {param2}, {param3})\n"
+                code += f"    if not result then\n"
+                code += f"        log.error(\"liquid_circuit: motor async operation failed\")\n"
+                code += f"        error(\"Motor operation failed\")\n"
+                code += f"    end\n"
+                
+                wait_complete = step.get("wait_complete", True)
+                if wait_complete:
+                    code += f"    if not {motor}:wait_complete(20000) then\n"
+                    code += f"        log.error(\"liquid_circuit: motor wait timeout!\")\n"
+                    code += f"        error(\"Motor wait timeout\")\n"
+                    code += f"    end\n"
+                else:
+                    code += f"    -- 注意: 需要在后续步骤中添加对应的电机等待步骤\n"
+                    
+        elif step_type == "电机等待":
+            motor = self.lua_device_mapping.get(step["motor"], step["motor"].lower())
+            timeout = step.get("timeout", "20000")
+            code += f"    if not {motor}:wait_complete({timeout}) then\n"
+            code += f"        log.error(\"liquid_circuit: motor wait timeout!\")\n"
+            code += f"        error(\"Motor wait timeout\")\n"
+            code += f"    end\n"
+            
+        elif step_type == "循环":
+            count = step.get("count", "1")
+            loop_steps = step.get("steps", [])
+            code += f"    for i = 1, {count} do\n"
+            code += f"        -- 循环第 i 次，共执行 {len(loop_steps)} 个步骤\n"
+            
+            for j, loop_step in enumerate(loop_steps):
+                loop_code = self.generate_lua_step_code(loop_step, j)
+                # 给循环内的代码增加缩进
+                loop_code_lines = loop_code.split('\n')
+                for line in loop_code_lines:
+                    if line.strip():
+                        if line.startswith('    --'):
+                            code += f"    {line}\n"
+                        elif line.startswith('    '):
+                            code += f"    {line}\n"
+                        else:
+                            code += f"        {line}\n"
+            
+            code += f"    end\n"
+            
+        elif step_type == "复合动作":
+            desc = step["description"]
+            code += f"    -- 复合动作: {desc}\n"
+            if "针下、上" in desc and "脉冲" in desc:
+                pulse_match = re.search(r'(\d+)脉冲', desc)
+                repeat_match = re.search(r'重复(\d+)次', desc)
+                pulses = pulse_match.group(1) if pulse_match else "1800"
+                repeats = repeat_match.group(1) if repeat_match else "1"
+                
+                code += f"    for i = 1, {repeats} do\n"
+                code += f"        motor.needle_s_z:move_step_async({pulses}, 20000, 50000)\n"
+                code += f"        time.sleep(500)\n"
+                code += f"        motor.needle_s_z:wait_complete(20000)\n"
+                code += f"        motor.needle_s_z:move_step_async(-{pulses}, 20000, 50000)\n"
+                code += f"        time.sleep(500)\n"
+                code += f"        motor.needle_s_z:wait_complete(20000)\n"
+                code += f"    end\n"
+            else:
+                code += f"    -- TODO: 实现复合动作逻辑\n"
+                
+        code += "\n"
+        return code
+        
     def import_excel(self):
         if not PANDAS_AVAILABLE:
             messagebox.showerror("错误", "需要安装pandas库")
@@ -861,7 +1070,7 @@ void {func_name}(void)
                 "description": self.process_desc_text.get("1.0", tk.END).strip(),
                 "steps": self.steps_data,
                 "created_time": datetime.now().isoformat(),
-                "version": "1.2"
+                "version": "1.3_with_lua"
             }
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(process_data, f, ensure_ascii=False, indent=2)
@@ -881,17 +1090,28 @@ void {func_name}(void)
             self.update_code_preview()
             messagebox.showinfo("成功", "流程配置已加载")
             
-    def generate_c_code(self):
+    def generate_code(self):
+        """生成代码 - 根据输出类型选择"""
         if not self.steps_data:
             messagebox.showwarning("警告", "请先添加处理步骤")
             return
         self.update_code_preview()
-        messagebox.showinfo("成功", "C代码已生成")
+        output_type = self.output_type.get()
+        messagebox.showinfo("成功", f"{output_type}代码已生成")
         
     def save_c_code(self):
-        c_code = self.code_preview.get("1.0", tk.END).strip()
+        """保存C代码"""
+        if self.output_type.get() != "C":
+            # 临时切换到C模式生成代码
+            old_type = self.output_type.get()
+            self.output_type.set("C")
+            c_code = self.generate_c_function() if self.steps_data else ""
+            self.output_type.set(old_type)
+        else:
+            c_code = self.code_preview.get("1.0", tk.END).strip()
+            
         if not c_code:
-            messagebox.showwarning("警告", "没有可保存的代码")
+            messagebox.showwarning("警告", "没有可保存的C代码")
             return
             
         file_path = filedialog.asksaveasfilename(defaultextension=".c", 
@@ -900,6 +1120,28 @@ void {func_name}(void)
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(c_code)
             messagebox.showinfo("成功", "C代码已保存")
+            
+    def save_lua_code(self):
+        """保存Lua脚本"""
+        if self.output_type.get() != "Lua":
+            # 临时切换到Lua模式生成代码
+            old_type = self.output_type.get()
+            self.output_type.set("Lua")
+            lua_code = self.generate_lua_function() if self.steps_data else ""
+            self.output_type.set(old_type)
+        else:
+            lua_code = self.code_preview.get("1.0", tk.END).strip()
+            
+        if not lua_code:
+            messagebox.showwarning("警告", "没有可保存的Lua脚本")
+            return
+            
+        file_path = filedialog.asksaveasfilename(defaultextension=".lua", 
+                                               filetypes=[("Lua files", "*.lua"), ("Text files", "*.txt")])
+        if file_path:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(lua_code)
+            messagebox.showinfo("成功", "Lua脚本已保存")
 
 
 def main():
@@ -909,25 +1151,30 @@ def main():
         
         root.minsize(1200, 700)
         root.update_idletasks()
-        width, height = 1400, 900
+        width, height = 1500, 950
         x = (root.winfo_screenwidth() // 2) - (width // 2)
         y = (root.winfo_screenheight() // 2) - (height // 2)
         root.geometry(f'{width}x{height}+{x}+{y}')
         
-        print("液路流程配置工具启动成功 - 完整修复版")
-        print("已修复的问题:")
+        print("液路流程配置工具启动成功 - 完整版 + Lua脚本支持")
+        print("新增功能:")
+        print("1. Lua脚本输出支持")
+        print("2. 双输出模式 - 可选择C语言或Lua脚本")
+        print("3. Lua风格的设备控制接口")
+        print("4. 独立的保存按钮支持两种格式")
+        print("\n已修复的问题:")
         print("1. 循环中电机控制参数缺失 (KeyError: 'param1')")
         print("2. 循环下拉框选项与主界面不一致")
         print("3. 循环中电机控制缺少同步/异步模式选择")
         print("4. 统一了所有电机选项列表")
         print("\n所有功能已完成:")
-        print("1. 阀门控制 - valve_set()")
-        print("2. 泵控制 - valve_set()")
-        print("3. 延时控制 - usleep()")
-        print("4. 电机控制 - 同步/异步模式")
-        print("5. 电机等待 - motor_timedwait()")
-        print("6. 循环功能 - for循环结构")
-        print("7. 复合动作 - 自定义操作")
+        print("1. 阀门控制 - C: valve_set() / Lua: valve.xxx:set()")
+        print("2. 泵控制 - C: valve_set() / Lua: pump.xxx:set()")
+        print("3. 延时控制 - C: usleep() / Lua: time.sleep()")
+        print("4. 电机控制 - C: 同步/异步模式 / Lua: xxx_sync/xxx_async")
+        print("5. 电机等待 - C: motor_timedwait() / Lua: wait_complete()")
+        print("6. 循环功能 - C: for循环 / Lua: for循环")
+        print("7. 复合动作 - 自定义操作，两种语言实现")
         
         root.mainloop()
         
