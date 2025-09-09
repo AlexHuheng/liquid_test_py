@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-液路清洗流程配置与C代码生成工具 - 完整修复版 + Lua脚本支持
+液路清洗流程配置与C/Lua代码生成工具 - 完整版
 包含电机同步异步、电机等待、循环功能，新增Lua脚本输出
 修复了循环中电机控制参数缺失和下拉框选项不一致的问题
+增加了循环步骤的上移下移功能
 """
 
 import sys
@@ -81,7 +82,7 @@ class LiquidProcessGenerator:
         
         self.setup_ui()
         print("液路流程配置工具初始化完成 - 已增加Lua脚本支持")
-        
+
     def setup_ui(self):
         # 主框架
         main_frame = ttk.Frame(self.root, padding="10")
@@ -369,9 +370,9 @@ end
         ttk.Label(self.param_frame, text="复合动作描述:").grid(row=0, column=0, sticky=(tk.W, tk.N), pady=5)
         self.complex_desc_text = tk.Text(self.param_frame, height=4)
         self.complex_desc_text.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=5)
- 
+         
     def setup_loop_params(self):
-        """设置循环参数界面"""
+        """设置循环参数界面 - 包含完整的上移下移功能，优化布局"""
         print("创建循环参数界面...")
         
         # 循环次数设置
@@ -380,52 +381,225 @@ end
         count_entry = ttk.Entry(self.param_frame, textvariable=self.loop_count_var, width=10)
         count_entry.grid(row=0, column=1, sticky=tk.W, pady=5)
         
-        # 循环内容配置区域
-        loop_frame = ttk.LabelFrame(self.param_frame, text="循环步骤配置", padding="10")
+        # 循环内容配置区域 - 使用固定高度和滚动条
+        loop_frame = ttk.LabelFrame(self.param_frame, text="循环步骤配置", padding="5")
         loop_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=10)
         loop_frame.columnconfigure(1, weight=1)
         self.param_frame.rowconfigure(1, weight=1)
         
+        # 创建一个Canvas和Scrollbar来处理滚动
+        canvas = tk.Canvas(loop_frame, height=350)  # 固定高度
+        scrollbar_loop = ttk.Scrollbar(loop_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar_loop.set)
+        
+        canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        scrollbar_loop.grid(row=0, column=1, sticky=(tk.N, tk.S), pady=5)
+        loop_frame.rowconfigure(0, weight=1)
+        
+        # 在可滚动框架内创建内容
         # 循环步骤类型
-        ttk.Label(loop_frame, text="步骤类型:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        type_frame = ttk.Frame(scrollable_frame)
+        type_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(type_frame, text="步骤类型:").pack(side=tk.LEFT, padx=(0, 10))
         self.loop_step_type_var = tk.StringVar()
-        loop_step_combo = ttk.Combobox(loop_frame, textvariable=self.loop_step_type_var,
+        loop_step_combo = ttk.Combobox(type_frame, textvariable=self.loop_step_type_var,
                                      values=["阀门控制", "泵控制", "延时", "电机控制", "电机等待"],
                                      state="readonly", width=15)
-        loop_step_combo.grid(row=0, column=1, sticky=tk.W, pady=2)
+        loop_step_combo.pack(side=tk.LEFT)
         loop_step_combo.bind('<<ComboboxSelected>>', self.on_loop_step_type_changed)
         
         # 循环步骤参数区域
-        self.loop_param_frame = ttk.Frame(loop_frame)
-        self.loop_param_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        self.loop_param_frame.columnconfigure(1, weight=1)
+        self.loop_param_frame = ttk.Frame(scrollable_frame)
+        self.loop_param_frame.pack(fill=tk.X, padx=5, pady=10)
         
-        # 操作按钮
-        loop_btn_frame = ttk.Frame(loop_frame)
-        loop_btn_frame.grid(row=2, column=0, columnspan=2, pady=5)
-        ttk.Button(loop_btn_frame, text="添加到循环", command=self.add_to_loop).pack(side=tk.LEFT, padx=2)
-        ttk.Button(loop_btn_frame, text="删除选中", command=self.remove_from_loop).pack(side=tk.LEFT, padx=2)
-        ttk.Button(loop_btn_frame, text="清空全部", command=self.clear_loop).pack(side=tk.LEFT, padx=2)
+        # 操作按钮区域 - 在scrollable_frame的底部
+        button_container = ttk.Frame(scrollable_frame)
+        button_container.pack(fill=tk.X, padx=5, pady=10)
         
-        # 循环步骤列表
-        ttk.Label(loop_frame, text="当前循环步骤:").grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(10,2))
-        self.loop_steps_listbox = tk.Listbox(loop_frame, height=6)
-        self.loop_steps_listbox.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+        # 操作按钮 - 包含完整的5个按钮，分两行显示
+        loop_btn_frame = ttk.LabelFrame(button_container, text="操作", padding="5")
+        loop_btn_frame.pack(fill=tk.X)
+        
+        # 第一行按钮 - 基本操作
+        btn_row1 = ttk.Frame(loop_btn_frame)
+        btn_row1.pack(pady=2)
+        ttk.Button(btn_row1, text="添加到循环", command=self.add_to_loop, width=12).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_row1, text="删除选中", command=self.remove_from_loop, width=12).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_row1, text="清空全部", command=self.clear_loop, width=12).pack(side=tk.LEFT, padx=3)
+        
+        # 第二行按钮 - 移动操作
+        btn_row2 = ttk.Frame(loop_btn_frame)
+        btn_row2.pack(pady=2)
+        ttk.Button(btn_row2, text="↑ 上移", command=self.move_loop_step_up, width=12).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_row2, text="↓ 下移", command=self.move_loop_step_down, width=12).pack(side=tk.LEFT, padx=3)
+        
+        # 循环步骤列表 - 在scrollable_frame的最底部
+        list_container = ttk.Frame(scrollable_frame)
+        list_container.pack(fill=tk.X, padx=5, pady=10)
+        
+        ttk.Label(list_container, text="当前循环步骤:", font=("Arial", 9, "bold")).pack(anchor=tk.W)
+        self.loop_steps_listbox = tk.Listbox(list_container, height=4, font=("Arial", 9))  # 减少高度
+        self.loop_steps_listbox.pack(fill=tk.X, pady=2)
+        
+        # 鼠标滚轮绑定
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
         # 初始化循环步骤数据
         self.loop_steps_data = []
         
-        # 说明
+        # 说明文字 - 放在主param_frame的底部
         info_label = ttk.Label(self.param_frame, 
-                              text="循环功能将重复执行指定的步骤序列，生成for循环结构的代码", 
-                              foreground="gray", font=("Arial", 9))
-        info_label.grid(row=2, column=0, columnspan=2, pady=10)
+                              text="循环功能: 重复执行步骤序列 | 使用↑↓调整顺序 | 内容区域可滚动", 
+                              foreground="gray", font=("Arial", 8), justify=tk.CENTER)
+        info_label.grid(row=2, column=0, columnspan=2, pady=5)
         
-        print("循环参数界面创建完成")
+        print("循环参数界面创建完成 - 包含滚动功能和完整的5个操作按钮")
+        
+    def on_loop_step_type_changed(self, event=None):
+        """循环内步骤类型改变时的处理 - 优化布局"""
+        step_type = self.loop_step_type_var.get()
+        print(f"循环步骤类型选择: {step_type}")
+        
+        # 清空循环参数区域
+        for widget in self.loop_param_frame.winfo_children():
+            widget.destroy()
+            
+        if step_type == "阀门控制":
+            # 使用更紧凑的布局
+            row = 0
+            ttk.Label(self.loop_param_frame, text="阀门:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_valve_var = tk.StringVar()
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_valve_var,
+                        values=["SV1", "SV2", "SV3", "SV4", "SV5", "SV6", 
+                               "SV7", "SV8", "SV9", "SV10", "SV11", "SV12"], width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="操作:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_valve_action_var = tk.StringVar(value="开")
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_valve_action_var,
+                        values=["开", "关"], state="readonly", width=8).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+        elif step_type == "泵控制":
+            row = 0
+            ttk.Label(self.loop_param_frame, text="泵:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_pump_var = tk.StringVar()
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_pump_var,
+                        values=["隔膜泵Q1", "隔膜泵Q2", "隔膜泵Q3", "隔膜泵Q4",
+                               "隔膜泵F1", "隔膜泵F2", "隔膜泵F3", "隔膜泵F4"], width=12).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="操作:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_pump_action_var = tk.StringVar(value="开")
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_pump_action_var,
+                        values=["开", "关"], state="readonly", width=8).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+        elif step_type == "延时":
+            row = 0
+            ttk.Label(self.loop_param_frame, text="延时:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_delay_time_var = tk.StringVar(value="100")
+            ttk.Entry(self.loop_param_frame, textvariable=self.loop_delay_time_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="单位:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_delay_unit_var = tk.StringVar(value="ms")
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_delay_unit_var,
+                        values=["ms", "s"], state="readonly", width=8).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+        elif step_type == "电机控制":
+            # 电机控制使用更紧凑的布局
+            row = 0
+            ttk.Label(self.loop_param_frame, text="电机:").grid(row=row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+            self.loop_motor_var = tk.StringVar()
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_motor_var,
+                        values=self.motor_options, width=12).grid(row=row, column=1, sticky=tk.W, pady=1)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="命令:").grid(row=row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+            self.loop_motor_cmd_var = tk.StringVar(value="步进移动")
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_motor_cmd_var,
+                        values=["复位", "步进移动", "速度移动", "停止"], state="readonly", width=10).grid(row=row, column=1, sticky=tk.W, pady=1)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="模式:").grid(row=row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+            self.loop_motor_mode_var = tk.StringVar(value="异步")
+            mode_combo = ttk.Combobox(self.loop_param_frame, textvariable=self.loop_motor_mode_var,
+                                    values=["异步", "同步"], state="readonly", width=8)
+            mode_combo.grid(row=row, column=1, sticky=tk.W, pady=1)
+            mode_combo.bind('<<ComboboxSelected>>', self.on_loop_motor_mode_changed)
+            
+            # 参数1-3 使用更紧凑的布局
+            for i, (param_name, default_val) in enumerate([("参数1:", "1800"), ("参数2:", "20000"), ("参数3:", "50000")]):
+                row += 1
+                ttk.Label(self.loop_param_frame, text=param_name).grid(row=row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+                var = tk.StringVar(value=default_val)
+                ttk.Entry(self.loop_param_frame, textvariable=var, width=10).grid(row=row, column=1, sticky=tk.W, pady=1)
+                setattr(self, f"loop_motor_param{i+1}_var", var)
+            
+            # 初始化模式相关变量
+            self.loop_motor_timeout_var = tk.StringVar(value="20000")
+            self.loop_motor_wait_var = tk.BooleanVar(value=True)
+            
+            # 显示模式相关控件
+            self.on_loop_motor_mode_changed()
+            
+        elif step_type == "电机等待":
+            row = 0
+            ttk.Label(self.loop_param_frame, text="等待电机:").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_motor_wait_motor_var = tk.StringVar()
+            ttk.Combobox(self.loop_param_frame, textvariable=self.loop_motor_wait_motor_var,
+                        values=self.motor_options, width=12).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+            row += 1
+            ttk.Label(self.loop_param_frame, text="超时(ms):").grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0,5))
+            self.loop_motor_wait_timeout_var = tk.StringVar(value="20000")
+            ttk.Entry(self.loop_param_frame, textvariable=self.loop_motor_wait_timeout_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
+            
+        # 更新滚动区域
+        self.loop_param_frame.update_idletasks()
+        
+    def on_loop_motor_mode_changed(self, event=None):
+        """处理循环中电机模式改变 - 优化布局"""
+        if not hasattr(self, 'loop_motor_mode_var'):
+            return
+            
+        mode = self.loop_motor_mode_var.get()
+        print(f"循环电机模式切换: {mode}")
+        
+        # 清理之前的模式控件
+        for attr in ['loop_timeout_label', 'loop_timeout_entry', 'loop_wait_label', 'loop_wait_check']:
+            if hasattr(self, attr):
+                getattr(self, attr).destroy()
+                delattr(self, attr)
+        
+        # 找到下一个可用的行号
+        next_row = 6
+        
+        if mode == "同步":
+            self.loop_timeout_label = ttk.Label(self.loop_param_frame, text="超时(ms):")
+            self.loop_timeout_label.grid(row=next_row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+            self.loop_timeout_entry = ttk.Entry(self.loop_param_frame, textvariable=self.loop_motor_timeout_var, width=10)
+            self.loop_timeout_entry.grid(row=next_row, column=1, sticky=tk.W, pady=1)
+        elif mode == "异步":
+            self.loop_wait_label = ttk.Label(self.loop_param_frame, text="立即等待:")
+            self.loop_wait_label.grid(row=next_row, column=0, sticky=tk.W, pady=1, padx=(0,5))
+            self.loop_wait_check = ttk.Checkbutton(self.loop_param_frame, variable=self.loop_motor_wait_var, text="是")
+            self.loop_wait_check.grid(row=next_row, column=1, sticky=tk.W, pady=1)
         
     def on_loop_step_type_changed(self, event=None):
         """循环内步骤类型改变时的处理"""
         step_type = self.loop_step_type_var.get()
+        print(f"循环步骤类型选择: {step_type}")
         
         # 清空循环参数区域
         for widget in self.loop_param_frame.winfo_children():
@@ -523,6 +697,7 @@ end
             return
             
         mode = self.loop_motor_mode_var.get()
+        print(f"循环电机模式切换: {mode}")
         
         # 清理之前的模式控件
         for attr in ['loop_timeout_label', 'loop_timeout_entry', 'loop_wait_label', 'loop_wait_check']:
@@ -540,7 +715,7 @@ end
             self.loop_wait_label.grid(row=6, column=0, sticky=tk.W, pady=2)
             self.loop_wait_check = ttk.Checkbutton(self.loop_param_frame, variable=self.loop_motor_wait_var, text="是")
             self.loop_wait_check.grid(row=6, column=1, sticky=tk.W, pady=2)
-            
+
     def add_to_loop(self):
         """添加步骤到循环中"""
         step_type = self.loop_step_type_var.get()
@@ -602,20 +777,70 @@ end
             
         self.loop_steps_data.append(step_data)
         self.loop_steps_listbox.insert(tk.END, f"{len(self.loop_steps_data)}. {desc}")
-        print(f"添加循环步骤: {desc}")
+        print(f"✅ 添加循环步骤: {desc}")
         
     def remove_from_loop(self):
         """从循环中删除步骤"""
         selection = self.loop_steps_listbox.curselection()
         if selection:
             index = selection[0]
-            self.loop_steps_data.pop(index)
+            removed_step = self.loop_steps_data.pop(index)
             self.refresh_loop_steps_list()
+            print(f"❌ 删除循环步骤: 索引 {index}")
+        else:
+            messagebox.showwarning("警告", "请先选择要删除的步骤")
+            
+    def move_loop_step_up(self):
+        """循环步骤上移 - 重要功能"""
+        selection = self.loop_steps_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择要移动的步骤")
+            return
+            
+        if selection[0] == 0:
+            messagebox.showinfo("提示", "已经是第一个步骤，无法上移")
+            return
+            
+        idx = selection[0]
+        # 交换步骤数据
+        self.loop_steps_data[idx], self.loop_steps_data[idx-1] = self.loop_steps_data[idx-1], self.loop_steps_data[idx]
+        # 刷新列表
+        self.refresh_loop_steps_list()
+        # 保持选中状态在新位置
+        self.loop_steps_listbox.selection_set(idx-1)
+        print(f"⬆️ 循环步骤上移: 从索引 {idx} 移动到 {idx-1}")
+            
+    def move_loop_step_down(self):
+        """循环步骤下移 - 重要功能"""
+        selection = self.loop_steps_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择要移动的步骤")
+            return
+            
+        if selection[0] >= len(self.loop_steps_data) - 1:
+            messagebox.showinfo("提示", "已经是最后一个步骤，无法下移")
+            return
+            
+        idx = selection[0]
+        # 交换步骤数据
+        self.loop_steps_data[idx], self.loop_steps_data[idx+1] = self.loop_steps_data[idx+1], self.loop_steps_data[idx]
+        # 刷新列表
+        self.refresh_loop_steps_list()
+        # 保持选中状态在新位置
+        self.loop_steps_listbox.selection_set(idx+1)
+        print(f"⬇️ 循环步骤下移: 从索引 {idx} 移动到 {idx+1}")
             
     def clear_loop(self):
         """清空循环步骤"""
-        self.loop_steps_data.clear()
-        self.loop_steps_listbox.delete(0, tk.END)
+        if not self.loop_steps_data:
+            messagebox.showinfo("提示", "循环步骤列表已经是空的")
+            return
+            
+        result = messagebox.askyesno("确认清空", f"确定要清空所有循环步骤吗？\n当前有 {len(self.loop_steps_data)} 个步骤。")
+        if result:
+            self.loop_steps_data.clear()
+            self.loop_steps_listbox.delete(0, tk.END)
+            print("🗑️ 已清空所有循环步骤")
         
     def refresh_loop_steps_list(self):
         """刷新循环步骤列表"""
@@ -623,7 +848,7 @@ end
         for i, step in enumerate(self.loop_steps_data):
             desc = self.get_step_description(step)
             self.loop_steps_listbox.insert(tk.END, f"{i+1}. {desc}")
-        
+            
     def add_step(self):
         step_type = self.step_type_var.get()
         if not step_type:
@@ -1070,7 +1295,7 @@ end
                 "description": self.process_desc_text.get("1.0", tk.END).strip(),
                 "steps": self.steps_data,
                 "created_time": datetime.now().isoformat(),
-                "version": "1.3_with_lua"
+                "version": "1.3_with_lua_and_loop_controls"
             }
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(process_data, f, ensure_ascii=False, indent=2)
@@ -1143,7 +1368,6 @@ end
                 f.write(lua_code)
             messagebox.showinfo("成功", "Lua脚本已保存")
 
-
 def main():
     try:
         root = tk.Tk()
@@ -1156,30 +1380,42 @@ def main():
         y = (root.winfo_screenheight() // 2) - (height // 2)
         root.geometry(f'{width}x{height}+{x}+{y}')
         
-        print("液路流程配置工具启动成功 - 完整版 + Lua脚本支持")
-        print("新增功能:")
-        print("1. Lua脚本输出支持")
-        print("2. 双输出模式 - 可选择C语言或Lua脚本")
-        print("3. Lua风格的设备控制接口")
-        print("4. 独立的保存按钮支持两种格式")
-        print("\n已修复的问题:")
-        print("1. 循环中电机控制参数缺失 (KeyError: 'param1')")
-        print("2. 循环下拉框选项与主界面不一致")
-        print("3. 循环中电机控制缺少同步/异步模式选择")
-        print("4. 统一了所有电机选项列表")
-        print("\n所有功能已完成:")
+        print("🚀 液路流程配置工具启动成功 - 完整版 + Lua脚本支持")
+        print("\n🎯 新增功能:")
+        print("1. ✅ Lua脚本输出支持")
+        print("2. ✅ 双输出模式 - 可选择C语言或Lua脚本")
+        print("3. ✅ Lua风格的设备控制接口")
+        print("4. ✅ 独立的保存按钮支持两种格式")
+        print("5. ✅ 循环步骤编辑增强 - 完整的上移/下移功能")
+        
+        print("\n🔧 已修复的问题:")
+        print("1. ✅ 循环中电机控制参数缺失 (KeyError: 'param1')")
+        print("2. ✅ 循环下拉框选项与主界面不一致")
+        print("3. ✅ 循环中电机控制缺少同步/异步模式选择")
+        print("4. ✅ 统一了所有电机选项列表")
+        print("5. ✅ 修复了循环步骤上移下移按钮显示问题")
+        
+        print("\n📋 循环功能完整特性:")
+        print("🔘 添加到循环：将配置的步骤添加到循环序列")
+        print("🔘 删除选中：删除选中的循环步骤")
+        print("🔘 ↑ 上移：将选中步骤向上移动一位")
+        print("🔘 ↓ 下移：将选中步骤向下移动一位")  
+        print("🔘 清空全部：清空所有循环步骤（带确认提示）")
+        
+        print("\n⚡ 所有功能已完成:")
         print("1. 阀门控制 - C: valve_set() / Lua: valve.xxx:set()")
         print("2. 泵控制 - C: valve_set() / Lua: pump.xxx:set()")
         print("3. 延时控制 - C: usleep() / Lua: time.sleep()")
         print("4. 电机控制 - C: 同步/异步模式 / Lua: xxx_sync/xxx_async")
         print("5. 电机等待 - C: motor_timedwait() / Lua: wait_complete()")
-        print("6. 循环功能 - C: for循环 / Lua: for循环")
+        print("6. 循环功能 - C: for循环 / Lua: for循环 (完整编辑功能)")
         print("7. 复合动作 - 自定义操作，两种语言实现")
+        print("\n🎉 工具可以正常使用了！现在循环中包含完整的上移下移按钮！")
         
         root.mainloop()
         
     except Exception as e:
-        print(f"程序启动失败: {e}")
+        print(f"❌ 程序启动失败: {e}")
         traceback.print_exc()
 
 
